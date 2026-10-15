@@ -4,3 +4,5 @@
 ReadLaterURLCache/
 ReadingListURLCache/
 backups/
+.agents/
+.claude/
