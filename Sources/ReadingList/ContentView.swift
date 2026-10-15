@@ -8,6 +8,7 @@ struct ContentView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.openSettings) private var openSettings
     @AppStorage(AppSettingsKeys.isDeletionEnabled) private var isDeletionEnabled = false
+    @AppStorage(AppSettingsKeys.isPreviewDarkModeForced) private var isPreviewDarkModeForced = false
     @State private var pendingOpenURLs: [URL] = []
     @State private var pendingOpenLinksSourceName = ""
     @State private var isShowingOpenLinksConfirmation = false
@@ -262,6 +263,14 @@ struct ContentView: View {
 
                         Spacer()
 
+                        Toggle(isOn: $isPreviewDarkModeForced) {
+                            Label("Dark Page", systemImage: "moon")
+                                .labelStyle(.iconOnly)
+                        }
+                        .toggleStyle(.button)
+                        .controlSize(.regular)
+                        .help(isPreviewDarkModeForced ? "Show page in original colors" : "Show page in dark colors")
+
                         let isUpdatingReadState = viewModel.updatingReadStateItemIDs.contains(selectedItem.id)
 
                         Button {
@@ -303,7 +312,7 @@ struct ContentView: View {
 
                     Divider()
 
-                    WebPreviewView(url: selectedItem.url)
+                    WebPreviewView(url: selectedItem.url, isDarkModeForced: isPreviewDarkModeForced)
                 }
             } else {
                 VStack(spacing: 12) {

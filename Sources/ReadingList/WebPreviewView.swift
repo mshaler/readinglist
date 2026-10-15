@@ -3,6 +3,7 @@ import WebKit
 
 struct WebPreviewView: NSViewRepresentable {
     let url: URL
+    let isDarkModeForced: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -15,10 +16,17 @@ struct WebPreviewView: NSViewRepresentable {
         let view = TrackingWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         view.uiDelegate = context.coordinator
+        PreviewDarkMode.apply(isDarkModeForced, to: view)
+        view.appliedDarkModeForced = isDarkModeForced
         return view
     }
 
     func updateNSView(_ nsView: TrackingWebView, context _: Context) {
+        if nsView.appliedDarkModeForced != isDarkModeForced {
+            PreviewDarkMode.apply(isDarkModeForced, to: nsView)
+            nsView.appliedDarkModeForced = isDarkModeForced
+        }
+
         guard nsView.lastRequestedURL != url else {
             return
         }
@@ -47,4 +55,5 @@ struct WebPreviewView: NSViewRepresentable {
 
 final class TrackingWebView: WKWebView {
     var lastRequestedURL: URL?
+    var appliedDarkModeForced = false
 }
