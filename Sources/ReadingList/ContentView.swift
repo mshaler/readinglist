@@ -153,10 +153,10 @@ struct ContentView: View {
             if viewModel.filteredItems.isEmpty {
                 emptyStateView
             } else {
-                List(selection: $viewModel.selectedItemID) {
+                List(selection: $viewModel.selectedItemIDs) {
                     ForEach(viewModel.visibleItems) { item in
                         ReadingListRow(item: item)
-                            .tag(item.id as ReadingListItem.ID?)
+                            .tag(item.id)
                             .listRowSeparator(.hidden)
                             .contextMenu {
                                 itemContextMenu(for: item)
@@ -167,22 +167,21 @@ struct ContentView: View {
                     }
                 }
                 .listStyle(.plain)
-                .onChange(of: viewModel.selectedItemID) { _, id in
-                    guard let id else {
-                        return
+                .onChange(of: viewModel.selectedItemIDs) { _, ids in
+                    for id in ids {
+                        viewModel.loadMoreItemsIfNeeded(currentItemID: id)
                     }
-                    viewModel.loadMoreItemsIfNeeded(currentItemID: id)
                 }
                 .focused($isItemListFocused)
                 .onDeleteCommand {
-                    deleteSelectedItem()
+                    deleteSelectedItems()
                 }
                 // Delete (⌫) arrives via onDeleteCommand; Forward Delete (⌦) doesn't.
                 .onKeyPress(.deleteForward) {
-                    guard viewModel.selectedItem != nil else {
+                    guard !viewModel.selectedItemIDs.isEmpty else {
                         return .ignored
                     }
-                    deleteSelectedItem()
+                    deleteSelectedItems()
                     return .handled
                 }
             }
@@ -399,29 +398,30 @@ struct ContentView: View {
         Divider()
 
         Button(role: .destructive) {
-            requestDelete(item)
+            requestDelete([item])
         } label: {
             Label(isDeletionEnabled ? "Delete" : "Delete\u{2026}", systemImage: "trash")
         }
         .disabled(viewModel.deletingItemIDs.contains(item.id))
     }
 
-    /// Deletes the selected item, or explains how to enable deleting if it's off.
-    private func deleteSelectedItem() {
-        guard let item = viewModel.selectedItem else {
+    /// Deletes the selected items, or explains how to enable deleting if it's off.
+    private func deleteSelectedItems() {
+        let items = viewModel.selectedItems
+        guard !items.isEmpty else {
             return
         }
-        requestDelete(item)
+        requestDelete(items)
     }
 
-    private func requestDelete(_ item: ReadingListItem) {
+    private func requestDelete(_ items: [ReadingListItem]) {
         guard isDeletionEnabled else {
             isShowingDeletionDisabledAlert = true
             return
         }
 
         let hadListFocus = isItemListFocused
-        viewModel.delete(item)
+        viewModel.delete(items)
 
         // Removing the selected row makes AppKit drop first responder, so a
         // follow-up Delete keypress would go nowhere. Hand focus back to the list.

@@ -40,7 +40,7 @@ final class ReadingListViewModel {
         }
     }
 
-    var selectedItemID: ReadingListItem.ID?
+    var selectedItemIDs: Set<ReadingListItem.ID> = []
 
     private(set) var filteredItems: [ReadingListItem] = []
     private(set) var frequentDomainFolders: [DomainFolder] = []
@@ -116,8 +116,14 @@ final class ReadingListViewModel {
         Array(filteredItems.prefix(visibleItemLimit))
     }
 
+    /// The selected items, in list order.
+    var selectedItems: [ReadingListItem] {
+        filteredItems.filter { selectedItemIDs.contains($0.id) }
+    }
+
+    /// The selected item, when exactly one is selected.
     var selectedItem: ReadingListItem? {
-        guard let selectedItemID else {
+        guard selectedItemIDs.count == 1, let selectedItemID = selectedItemIDs.first else {
             return nil
         }
         return filteredItems.first(where: { $0.id == selectedItemID })
@@ -234,68 +240,64 @@ final class ReadingListViewModel {
         }
     }
 
-    func delete(_ item: ReadingListItem) {
-        guard !deletingItemIDs.contains(item.id) else {
+    func delete(_ items: [ReadingListItem]) {
+        let items = items.filter { !deletingItemIDs.contains($0.id) }
+        guard !items.isEmpty else {
             return
         }
 
-        deletingItemIDs.insert(item.id)
+        let itemIDs = Set(items.map(\.id))
+        deletingItemIDs.formUnion(itemIDs)
 
         if isUsingDemoData {
             defer {
-                deletingItemIDs.remove(item.id)
+                deletingItemIDs.subtract(itemIDs)
             }
-            applyLocalDelete(itemID: item.id)
+            applyLocalDelete(itemIDs: itemIDs)
             return
         }
 
         Task {
             defer {
-                deletingItemIDs.remove(item.id)
+                deletingItemIDs.subtract(itemIDs)
             }
 
             do {
-                try await service.deleteItem(url: item.url, dateAdded: item.dateAdded)
-                applyLocalDelete(itemID: item.id)
+                try await service.deleteItems(items)
+                applyLocalDelete(itemIDs: itemIDs)
             } catch {
                 loadError = error.localizedDescription
             }
         }
     }
 
-    private func applyLocalDelete(itemID: ReadingListItem.ID) {
-        guard let index = allItems.firstIndex(where: { $0.id == itemID }) else {
-            return
-        }
-
-        let replacementSelectionID = selectedItemID == itemID
-            ? neighborItemID(of: itemID)
+    private func applyLocalDelete(itemIDs: Set<ReadingListItem.ID>) {
+        let replacementSelectionID = selectedItemIDs.isSubset(of: itemIDs) && !selectedItemIDs.isEmpty
+            ? neighborItemID(ofRemoved: itemIDs)
             : nil
 
-        allItems.remove(at: index)
+        allItems.removeAll { itemIDs.contains($0.id) }
         recomputeAllDerivedData(resetPagination: false)
 
         if let replacementSelectionID,
            filteredItems.contains(where: { $0.id == replacementSelectionID })
         {
-            selectedItemID = replacementSelectionID
+            selectedItemIDs = [replacementSelectionID]
         }
     }
 
-    /// The item that should take over selection when `itemID` is removed:
-    /// the one below it in the current list, or the one above if it was last.
-    private func neighborItemID(of itemID: ReadingListItem.ID) -> ReadingListItem.ID? {
-        guard let index = filteredItems.firstIndex(where: { $0.id == itemID }) else {
+    /// The item that should take over selection when `itemIDs` are removed:
+    /// the first remaining one below the last removed item, or the nearest
+    /// remaining one above if nothing is left below.
+    private func neighborItemID(ofRemoved itemIDs: Set<ReadingListItem.ID>) -> ReadingListItem.ID? {
+        let removedIndices = filteredItems.indices.filter { itemIDs.contains(filteredItems[$0].id) }
+        guard let firstRemoved = removedIndices.first, let lastRemoved = removedIndices.last else {
             return nil
         }
 
-        if index + 1 < filteredItems.count {
-            return filteredItems[index + 1].id
-        }
-        if index > 0 {
-            return filteredItems[index - 1].id
-        }
-        return nil
+        let below = filteredItems[(lastRemoved + 1)...].first { !itemIDs.contains($0.id) }
+        let above = filteredItems[..<firstRemoved].last { !itemIDs.contains($0.id) }
+        return (below ?? above)?.id
     }
 
     private func setReadState(of item: ReadingListItem, viewedDate: Date?) {
@@ -406,10 +408,9 @@ final class ReadingListViewModel {
             visibleItemLimit = min(max(visibleItemLimit, Self.itemsPageSize), filteredItems.count)
         }
 
-        if let selectedItemID,
-           !filteredItems.contains(where: { $0.id == selectedItemID })
-        {
-            self.selectedItemID = nil
+        let shownItemIDs = Set(filteredItems.map(\.id))
+        if !selectedItemIDs.isSubset(of: shownItemIDs) {
+            selectedItemIDs.formIntersection(shownItemIDs)
         }
     }
 

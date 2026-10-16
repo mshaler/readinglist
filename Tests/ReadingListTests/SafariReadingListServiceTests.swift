@@ -292,6 +292,48 @@ struct SafariReadingListServiceTests {
         }
     }
 
+    @Test func deleteItemsRemovesEveryTarget() async throws {
+        let added = Date(timeIntervalSinceReferenceDate: 700_000_000)
+        let url = try writeFixture(items: (0 ..< 4).map { index in
+            itemPayload(urlString: "https://example.com/item-\(index)", title: "Item \(index)", dateAdded: added)
+        })
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let service = SafariReadingListService(bookmarksPlistURL: url)
+        let items = try await service.fetchItems()
+        let targets = items.filter { $0.title != "Item 2" }
+
+        try await service.deleteItems(targets)
+
+        let remaining = try await service.fetchItems()
+        #expect(remaining.map(\.title) == ["Item 2"])
+    }
+
+    @Test func deleteItemsChangesNothingWhenAnyTargetIsMissing() async throws {
+        let added = Date(timeIntervalSinceReferenceDate: 700_000_000)
+        let url = try writeFixture(items: [
+            itemPayload(urlString: "https://example.com/exists", title: "Exists", dateAdded: added),
+        ])
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let service = SafariReadingListService(bookmarksPlistURL: url)
+        let existing = try #require(try await service.fetchItems().first)
+        let missing = ReadingListItem(
+            title: "Missing",
+            url: URL(string: "https://example.com/missing")!,
+            previewText: nil,
+            dateAdded: added,
+            dateLastViewed: nil
+        )
+
+        await #expect(throws: ReadingListWriteError.self) {
+            try await service.deleteItems([existing, missing])
+        }
+
+        let remaining = try await service.fetchItems()
+        #expect(remaining.map(\.title) == ["Exists"])
+    }
+
     @Test func fetchThrowsWhenFileMissing() async throws {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "missing-\(UUID().uuidString).plist", directoryHint: .notDirectory)
