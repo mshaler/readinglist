@@ -13,6 +13,9 @@ struct ContentView: View {
     @State private var pendingOpenLinksSourceName = ""
     @State private var isShowingOpenLinksConfirmation = false
     @State private var isShowingDeletionDisabledAlert = false
+    @State private var pendingDeleteItems: [ReadingListItem] = []
+    @State private var pendingDeleteRestoresListFocus = false
+    @State private var isShowingDeleteConfirmation = false
     @FocusState private var isItemListFocused: Bool
     private let openLinksConfirmationThreshold = 15
 
@@ -49,6 +52,21 @@ struct ContentView: View {
             }
         } message: {
             Text("This can open many tabs for \(pendingOpenLinksSourceName).")
+        }
+        .confirmationDialog(
+            "Delete \(pendingDeleteItems.count) items from your Reading List?",
+            isPresented: $isShowingDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete \(pendingDeleteItems.count) Items", role: .destructive) {
+                performDelete(pendingDeleteItems, restoringListFocus: pendingDeleteRestoresListFocus)
+                pendingDeleteItems = []
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteItems = []
+            }
+        } message: {
+            Text("They'll be removed from Safari on all your devices. This can't be undone.")
         }
         .alert("Deleting Is Turned Off", isPresented: $isShowingDeletionDisabledAlert) {
             Button("Open Settings") {
@@ -158,15 +176,15 @@ struct ContentView: View {
                         ReadingListRow(item: item)
                             .tag(item.id)
                             .listRowSeparator(.hidden)
-                            .contextMenu {
-                                itemContextMenu(for: item)
-                            }
                             .onAppear {
                                 viewModel.loadMoreItemsIfNeeded(currentItemID: item.id)
                             }
                     }
                 }
                 .listStyle(.plain)
+                .contextMenu(forSelectionType: ReadingListItem.ID.self) { ids in
+                    itemsContextMenu(for: ids)
+                }
                 .onChange(of: viewModel.selectedItemIDs) { _, ids in
                     for id in ids {
                         viewModel.loadMoreItemsIfNeeded(currentItemID: id)
@@ -313,6 +331,15 @@ struct ContentView: View {
 
                     WebPreviewView(url: selectedItem.url, isDarkModeForced: isPreviewDarkModeForced)
                 }
+            } else if viewModel.selectedItemIDs.count > 1 {
+                VStack(spacing: 12) {
+                    Image(systemName: "square.stack")
+                        .font(.system(size: 26))
+                        .foregroundStyle(.secondary)
+                    Text("\(viewModel.selectedItemIDs.count) items selected")
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "rectangle.and.text.magnifyingglass")
@@ -364,6 +391,26 @@ struct ContentView: View {
 
         if viewModel.selectedFolder == .smartFolder(smartFolderID) {
             viewModel.selectedFolder = .all
+        }
+    }
+
+    /// Right-clicking a selected row targets the whole selection; right-clicking
+    /// any other row targets just that row.
+    @ViewBuilder
+    private func itemsContextMenu(for ids: Set<ReadingListItem.ID>) -> some View {
+        let items = viewModel.filteredItems.filter { ids.contains($0.id) }
+        if items.count == 1, let item = items.first {
+            itemContextMenu(for: item)
+        } else if items.count > 1 {
+            Button(role: .destructive) {
+                requestDelete(items)
+            } label: {
+                Label(
+                    isDeletionEnabled ? "Delete \(items.count) Items" : "Delete \(items.count) Items\u{2026}",
+                    systemImage: "trash"
+                )
+            }
+            .disabled(items.contains { viewModel.deletingItemIDs.contains($0.id) })
         }
     }
 
@@ -420,12 +467,22 @@ struct ContentView: View {
             return
         }
 
-        let hadListFocus = isItemListFocused
+        if items.count > 1 {
+            pendingDeleteItems = items
+            pendingDeleteRestoresListFocus = isItemListFocused
+            isShowingDeleteConfirmation = true
+            return
+        }
+
+        performDelete(items, restoringListFocus: isItemListFocused)
+    }
+
+    private func performDelete(_ items: [ReadingListItem], restoringListFocus: Bool) {
         viewModel.delete(items)
 
         // Removing the selected row makes AppKit drop first responder, so a
         // follow-up Delete keypress would go nowhere. Hand focus back to the list.
-        if hadListFocus {
+        if restoringListFocus {
             Task { @MainActor in
                 isItemListFocused = true
             }
