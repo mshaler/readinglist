@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var pendingDeleteItems: [ReadingListItem] = []
     @State private var pendingDeleteRestoresListFocus = false
     @State private var isShowingDeleteConfirmation = false
+    @State private var isShowingQuitSafariConfirmation = false
     @FocusState private var isItemListFocused: Bool
     private let openLinksConfirmationThreshold = 15
 
@@ -66,7 +67,25 @@ struct ContentView: View {
                 pendingDeleteItems = []
             }
         } message: {
-            Text("They'll be removed from Safari on all your devices. This can't be undone.")
+            Text("They'll be removed from Safari on all your devices the next time Safari opens. This can't be undone.")
+        }
+        .alert(
+            pendingDeleteItems.count == 1
+                ? "Quit Safari and delete this item?"
+                : "Quit Safari and delete \(pendingDeleteItems.count) items?",
+            isPresented: $isShowingQuitSafariConfirmation
+        ) {
+            Button("Quit Safari and Delete", role: .destructive) {
+                quitSafariAndDeletePendingItems()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteItems = []
+            }
+        } message: {
+            Text(
+                "Safari undoes deletions made while it's open. " +
+                    "They'll sync to your other devices the next time you open Safari."
+            )
         }
         .alert("Deleting Is Turned Off", isPresented: $isShowingDeletionDisabledAlert) {
             Button("Open Settings") {
@@ -467,6 +486,14 @@ struct ContentView: View {
             return
         }
 
+        // This alert doubles as the delete confirmation.
+        if SafariApp.isRunning {
+            pendingDeleteItems = items
+            pendingDeleteRestoresListFocus = isItemListFocused
+            isShowingQuitSafariConfirmation = true
+            return
+        }
+
         if items.count > 1 {
             pendingDeleteItems = items
             pendingDeleteRestoresListFocus = isItemListFocused
@@ -475,6 +502,20 @@ struct ContentView: View {
         }
 
         performDelete(items, restoringListFocus: isItemListFocused)
+    }
+
+    private func quitSafariAndDeletePendingItems() {
+        let items = pendingDeleteItems
+        let restoresListFocus = pendingDeleteRestoresListFocus
+        pendingDeleteItems = []
+
+        Task { @MainActor in
+            guard await SafariApp.quit() else {
+                viewModel.loadError = "Safari didn't quit, so nothing was deleted."
+                return
+            }
+            performDelete(items, restoringListFocus: restoresListFocus)
+        }
     }
 
     private func performDelete(_ items: [ReadingListItem], restoringListFocus: Bool) {

@@ -84,7 +84,7 @@ private struct GeneralSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 640, height: 180)
+        .frame(width: 640, height: 200)
     }
 
     private var filePathDescription: String {
@@ -114,15 +114,17 @@ private struct AdvancedSettingsView: View {
 
                 Text(
                     "Lets you delete items with the Delete key or the Delete menu. " +
-                        "Deleted items are removed from Safari's Reading List on all your devices, " +
-                        "and this app can't restore them — so it's worth keeping a recent backup."
+                        "Safari has to be quit while deleting, and the app offers to quit it for you. " +
+                        "Deleted items are removed from Safari's Reading List on all your devices " +
+                        "the next time Safari opens, and this app can't restore them — " +
+                        "so it's worth keeping a recent backup."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 640, height: 180)
+        .frame(width: 640, height: 200)
         .alert("Turn On Deleting?", isPresented: $isShowingEnableConfirmation) {
             if accessManager.state.isReady {
                 Button("Back Up and Turn On") {
