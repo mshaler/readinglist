@@ -31,7 +31,7 @@ struct ReadingListRow: View {
                     .lineLimit(3)
 
                 HStack(spacing: 8) {
-                    Text(displayHostname)
+                    Text(item.hostname)
                     Spacer(minLength: 8)
                     if let dateAdded = item.dateAdded {
                         Text(dateAdded.formatted(date: .abbreviated, time: .omitted))
@@ -59,11 +59,6 @@ struct ReadingListRow: View {
             .replacingOccurrences(of: "http://", with: "")
     }
 
-    private var displayHostname: String {
-        item.hostname.hasPrefix("www.")
-            ? String(item.hostname.dropFirst(4))
-            : item.hostname
-    }
 }
 
 struct UnreadDotBadge: View {

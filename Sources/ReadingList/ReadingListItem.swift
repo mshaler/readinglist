@@ -22,7 +22,8 @@ struct ReadingListItem: Identifiable, Hashable, Sendable {
     ) {
         self.title = title
         self.url = url
-        hostname = Self.normalizedHost(from: url)
+        let normalizedHost = url.host.map(Self.normalizedHostname) ?? ""
+        hostname = normalizedHost.isEmpty ? "(no host)" : normalizedHost
         self.previewText = previewText
         self.dateAdded = dateAdded
         self.dateLastViewed = dateLastViewed
@@ -31,10 +32,10 @@ struct ReadingListItem: Identifiable, Hashable, Sendable {
         id = "\(url.absoluteString)|\(dateStamp)"
     }
 
-    private static func normalizedHost(from url: URL) -> String {
-        guard let host = url.host?.lowercased(), !host.isEmpty else {
-            return "(no host)"
-        }
-        return host
+    /// Lowercased, without a leading "www.", so www.example.com and
+    /// example.com count as the same website.
+    static func normalizedHostname(_ host: String) -> String {
+        let host = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 }

@@ -28,6 +28,31 @@ struct ReadingListViewModelTests {
         return viewModel
     }
 
+    /// Unread items: `count` from each host, oldest first, with distinct dates.
+    private func makeViewModel(hostCounts: [(host: String, count: Int)]) -> ReadingListViewModel {
+        var items: [ReadingListItem] = []
+        for (host, count) in hostCounts {
+            for index in 0 ..< count {
+                items.append(ReadingListItem(
+                    title: "\(host) \(index)",
+                    url: URL(string: "https://\(host)/\(index)")!,
+                    previewText: nil,
+                    dateAdded: Date(timeIntervalSinceReferenceDate: 700_000_000 - Double(items.count) * 60),
+                    dateLastViewed: nil
+                ))
+            }
+        }
+        let storageURL = FileManager.default.temporaryDirectory
+            .appending(path: "smart-folders-\(UUID().uuidString).json", directoryHint: .notDirectory)
+        let viewModel = ReadingListViewModel(
+            smartFolderStore: SmartFolderStore(storageURL: storageURL),
+            demoItems: items
+        )
+        viewModel.statusFilter = .all
+        viewModel.reload()
+        return viewModel
+    }
+
     private func select(_ titles: Set<String>, in viewModel: ReadingListViewModel) {
         viewModel.selectedItemIDs = Set(viewModel.filteredItems.filter { titles.contains($0.title) }.map(\.id))
     }
@@ -94,5 +119,29 @@ struct ReadingListViewModelTests {
         viewModel.searchQuery = "example.com/B"
 
         #expect(selectedTitles(viewModel) == ["B"])
+    }
+
+    @Test func wwwAndBareHostAreOneWebsite() {
+        let viewModel = makeViewModel(hostCounts: [("www.example.com", 6), ("example.com", 6)])
+
+        #expect(viewModel.frequentDomainFolders.map(\.hostname) == ["example.com"])
+        #expect(viewModel.frequentDomainFolders.first?.count == 12)
+    }
+
+    @Test func otherWebsitesHoldsSitesBelowTheCutoff() {
+        let viewModel = makeViewModel(hostCounts: [("big.com", 10), ("small.com", 3), ("tiny.com", 1)])
+
+        #expect(viewModel.frequentDomainFolders.map(\.hostname) == ["big.com"])
+        #expect(viewModel.otherDomainsCount == 4)
+
+        viewModel.selectedFolder = .otherDomains
+        #expect(Set(viewModel.filteredItems.map(\.hostname)) == ["small.com", "tiny.com"])
+    }
+
+    @Test func websitesAddUpToAll() {
+        let viewModel = makeViewModel(hostCounts: [("a.com", 12), ("www.b.com", 10), ("c.com", 9), ("d.com", 2)])
+
+        let websitesTotal = viewModel.frequentDomainFolders.map(\.count).reduce(0, +) + viewModel.otherDomainsCount
+        #expect(websitesTotal == viewModel.allCount)
     }
 }

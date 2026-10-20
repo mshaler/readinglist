@@ -44,6 +44,7 @@ final class ReadingListViewModel {
 
     private(set) var filteredItems: [ReadingListItem] = []
     private(set) var frequentDomainFolders: [DomainFolder] = []
+    private(set) var otherDomainsCount = 0
     private(set) var allCount = 0
     private(set) var smartFolderCounts: [String: Int] = [:]
     private(set) var selectionItemCount = 0
@@ -383,6 +384,7 @@ final class ReadingListViewModel {
                 }
                 return lhs.hostname.localizedCaseInsensitiveCompare(rhs.hostname) == .orderedAscending
             }
+        otherDomainsCount = source.count - frequentDomainFolders.map(\.count).reduce(0, +)
 
         recomputeSelectionData(resetPagination: resetPagination)
     }
@@ -448,6 +450,9 @@ final class ReadingListViewModel {
             return allItems.filter { folder.matches(item: $0) }
         case let .domain(hostname):
             return allItems.filter { $0.hostname == hostname }
+        case .otherDomains:
+            let frequentHostnames = Set(frequentDomainFolders.map(\.hostname))
+            return allItems.filter { !frequentHostnames.contains($0.hostname) }
         }
     }
 }

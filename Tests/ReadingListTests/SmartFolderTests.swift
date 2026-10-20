@@ -35,6 +35,25 @@ struct SmartFolderTests {
         #expect(!folder.matches(item: makeItem(urlString: "https://example.com/youtube.com")))
     }
 
+    @Test func itemHostnameDropsLeadingWWW() {
+        #expect(makeItem(urlString: "https://www.example.com/a").hostname == "example.com")
+        #expect(makeItem(urlString: "https://Example.com/a").hostname == "example.com")
+        #expect(makeItem(urlString: "https://blog.example.com/a").hostname == "blog.example.com")
+    }
+
+    @Test func folderHostnameWithWWWMatchesBareHost() {
+        let folder = SmartFolder(
+            id: "wired",
+            name: "Wired",
+            systemImage: "newspaper",
+            hostnames: ["www.wired.com"],
+            isBuiltIn: false
+        )
+
+        #expect(folder.matches(item: makeItem(urlString: "https://wired.com/story")))
+        #expect(folder.matches(item: makeItem(urlString: "https://www.wired.com/story")))
+    }
+
     @Test func keywordsMatchTitleURLAndPreview() {
         let folder = SmartFolder(
             id: "pdfs",

@@ -116,7 +116,7 @@ struct SmartFolder: Identifiable, Hashable, Sendable {
     }
 
     private static func normalize(hostname: String) -> String {
-        hostname.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        ReadingListItem.normalizedHostname(hostname)
     }
 }
 
@@ -210,6 +210,8 @@ enum FolderSelection: Hashable, Sendable {
     case all
     case smartFolder(String)
     case domain(String)
+    /// Websites with too few items to get their own sidebar entry.
+    case otherDomains
 
     func title(using smartFolders: [SmartFolder]) -> String {
         switch self {
@@ -219,6 +221,8 @@ enum FolderSelection: Hashable, Sendable {
             return smartFolders.first(where: { $0.id == id })?.displayName ?? "Smart List"
         case let .domain(host):
             return host
+        case .otherDomains:
+            return "Other Websites"
         }
     }
 }

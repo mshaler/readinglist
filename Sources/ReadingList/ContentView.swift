@@ -179,6 +179,17 @@ struct ContentView: View {
                         }
                     }
                 }
+
+                if viewModel.otherDomainsCount > 0 {
+                    NavigationLink(value: FolderSelection.otherDomains) {
+                        sidebarLabel(
+                            title: FolderSelection.otherDomains.title(using: []),
+                            icon: "ellipsis.circle",
+                            count: viewModel.otherDomainsCount,
+                            iconTint: sidebarIconTint(for: .otherDomains)
+                        )
+                    }
+                }
             }
         }
         .listStyle(.sidebar)
@@ -626,13 +637,9 @@ struct ContentView: View {
     }
 
     private func domainSidebarLabel(hostname: String, count: Int) -> some View {
-        let displayHostname = hostname.hasPrefix("www.")
-            ? String(hostname.dropFirst(4))
-            : hostname
-
-        return HStack(spacing: 8) {
+        HStack(spacing: 8) {
             FaviconImage(hostname: hostname, size: 14)
-            Text(displayHostname)
+            Text(hostname)
                 .font(.body)
                 .lineLimit(1)
                 .foregroundStyle(.primary)
@@ -653,7 +660,7 @@ struct ContentView: View {
                 return .blue
             }
             return SmartFolderIconPalette.tint(for: folder.systemImage)
-        case .domain:
+        case .domain, .otherDomains:
             return .gray
         }
     }
