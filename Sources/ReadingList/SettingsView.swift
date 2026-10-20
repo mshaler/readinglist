@@ -21,12 +21,6 @@ struct SettingsView: View {
                     Label("Smart Lists", systemImage: "line.3.horizontal.decrease.circle")
                 }
                 .tag(SettingsTab.smartLists)
-
-            AdvancedSettingsView(accessManager: accessManager)
-                .tabItem {
-                    Label("Advanced", systemImage: "gearshape.2")
-                }
-                .tag(SettingsTab.advanced)
         }
         .onAppear {
             applyPendingNavigation()
@@ -98,68 +92,5 @@ private struct GeneralSettingsView: View {
             return "~" + path.dropFirst(homePath.count)
         }
         return path
-    }
-}
-
-private struct AdvancedSettingsView: View {
-    var accessManager: BookmarkAccessManager
-
-    @AppStorage(AppSettingsKeys.isDeletionEnabled) private var isDeletionEnabled = false
-    @State private var isShowingEnableConfirmation = false
-
-    var body: some View {
-        Form {
-            Section("Deleting Items") {
-                Toggle("Allow deleting items", isOn: deletionToggleBinding)
-
-                Text(
-                    "Lets you delete items with the Delete key or the Delete menu. " +
-                        "Safari has to be quit while deleting, and the app offers to quit it for you. " +
-                        "Deleted items are removed from Safari's Reading List on all your devices " +
-                        "the next time Safari opens, and this app can't restore them — " +
-                        "so it's worth keeping a recent backup."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 640, height: 200)
-        .alert("Turn On Deleting?", isPresented: $isShowingEnableConfirmation) {
-            if accessManager.state.isReady {
-                Button("Back Up and Turn On") {
-                    if case let .ready(url) = accessManager.state,
-                       BookmarksBackup.promptAndSave(bookmarksPlistURL: url)
-                    {
-                        isDeletionEnabled = true
-                    }
-                }
-            }
-
-            Button("I Have a Backup") {
-                isDeletionEnabled = true
-            }
-
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "Deleting removes items from Safari's Reading List on all your devices, " +
-                    "and this app can't undo it. Make sure you have a recent backup of your " +
-                    "bookmarks file first — it only takes a second."
-            )
-        }
-    }
-
-    private var deletionToggleBinding: Binding<Bool> {
-        Binding(
-            get: { isDeletionEnabled },
-            set: { newValue in
-                if newValue {
-                    isShowingEnableConfirmation = true
-                } else {
-                    isDeletionEnabled = false
-                }
-            }
-        )
     }
 }

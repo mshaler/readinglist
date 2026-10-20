@@ -7,7 +7,7 @@ final class ReadingListViewModel {
     private(set) var allItems: [ReadingListItem] = []
     private(set) var isLoading = false
     private(set) var updatingReadStateItemIDs: Set<ReadingListItem.ID> = []
-    private(set) var deletingItemIDs: Set<ReadingListItem.ID> = []
+    private(set) var isApplyingPendingDeletions = false
     var loadError: String?
 
     var selectedFolder: FolderSelection? = .all {
@@ -45,6 +45,12 @@ final class ReadingListViewModel {
     private(set) var filteredItems: [ReadingListItem] = []
     private(set) var frequentDomainFolders: [DomainFolder] = []
     private(set) var otherDomainsCount = 0
+    private(set) var pendingDeletionCount = 0
+
+    /// Items in Safari that aren't staged for deletion.
+    private var activeItems: [ReadingListItem] = []
+    /// Items in Safari that are staged for deletion.
+    private var pendingItems: [ReadingListItem] = []
     private(set) var allCount = 0
     private(set) var smartFolderCounts: [String: Int] = [:]
     private(set) var selectionItemCount = 0
@@ -55,6 +61,7 @@ final class ReadingListViewModel {
 
     private let service: SafariReadingListService
     private let smartFolderStore: SmartFolderStore
+    private let pendingDeletionStore: PendingDeletionStore
     private let demoItems: [ReadingListItem]?
 
     static let minimumDomainCount = 10
@@ -62,9 +69,14 @@ final class ReadingListViewModel {
     private static let statusFilterDefaultsKey = "ReadingList.statusFilter"
     private static let sortOrderDefaultsKey = "ReadingList.sortOrder"
 
-    init(service: SafariReadingListService, smartFolderStore: SmartFolderStore) {
+    init(
+        service: SafariReadingListService,
+        smartFolderStore: SmartFolderStore,
+        pendingDeletionStore: PendingDeletionStore
+    ) {
         self.service = service
         self.smartFolderStore = smartFolderStore
+        self.pendingDeletionStore = pendingDeletionStore
         demoItems = nil
         (statusFilter, sortOrder) = Self.restoredFilterAndSort()
 
@@ -75,11 +87,16 @@ final class ReadingListViewModel {
         fileMonitor = monitor
     }
 
-    init(smartFolderStore: SmartFolderStore, demoItems: [ReadingListItem]) {
+    init(
+        smartFolderStore: SmartFolderStore,
+        pendingDeletionStore: PendingDeletionStore,
+        demoItems: [ReadingListItem]
+    ) {
         let dummyURL = FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library/Safari/Bookmarks.plist", directoryHint: .notDirectory)
         service = SafariReadingListService(bookmarksPlistURL: dummyURL)
         self.smartFolderStore = smartFolderStore
+        self.pendingDeletionStore = pendingDeletionStore
         self.demoItems = demoItems
         (statusFilter, sortOrder) = Self.restoredFilterAndSort()
     }
@@ -95,6 +112,11 @@ final class ReadingListViewModel {
 
     var isUsingDemoData: Bool {
         demoItems != nil
+    }
+
+    /// Safari's bookmarks file, or `nil` in demo mode.
+    var bookmarksPlistURL: URL? {
+        isUsingDemoData ? nil : service.bookmarksPlistURL
     }
 
     var availableSmartFolders: [SmartFolder] {
@@ -145,7 +167,10 @@ final class ReadingListViewModel {
         statusFilter: ReadingStatusFilter,
         sortOrder: ReadingListSortOrder = .newestFirst
     ) -> [ReadingListItem] {
-        let base = items(for: selection).filter(statusFilter.includes)
+        // The edit list shows everything staged, whatever its read state.
+        let base = selection == .pendingDeletions
+            ? items(for: selection)
+            : items(for: selection).filter(statusFilter.includes)
         let searchText = query.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let filtered: [ReadingListItem]
@@ -177,6 +202,7 @@ final class ReadingListViewModel {
             isLoading = false
             loadError = nil
             allItems = demoItems
+            dropPendingDeletionsMissingFromSafari()
             recomputeAllDerivedData(resetPagination: false)
             return
         }
@@ -190,6 +216,7 @@ final class ReadingListViewModel {
                 let items = try await service.fetchItems()
                 guard !Task.isCancelled else { return }
                 allItems = items
+                dropPendingDeletionsMissingFromSafari()
                 recomputeAllDerivedData(resetPagination: false)
                 isLoading = false
             } catch is CancellationError {
@@ -241,49 +268,69 @@ final class ReadingListViewModel {
         }
     }
 
+    /// Stages the items for deletion. They disappear from every list except
+    /// the edit list, and are removed from Safari by `applyPendingDeletions()`.
     func delete(_ items: [ReadingListItem]) {
-        let items = items.filter { !deletingItemIDs.contains($0.id) }
         guard !items.isEmpty else {
             return
         }
 
         let itemIDs = Set(items.map(\.id))
-        deletingItemIDs.formUnion(itemIDs)
-
-        if isUsingDemoData {
-            defer {
-                deletingItemIDs.subtract(itemIDs)
-            }
-            applyLocalDelete(itemIDs: itemIDs)
-            return
-        }
-
-        Task {
-            defer {
-                deletingItemIDs.subtract(itemIDs)
-            }
-
-            do {
-                try await service.deleteItems(items)
-                applyLocalDelete(itemIDs: itemIDs)
-            } catch {
-                loadError = error.localizedDescription
-            }
-        }
-    }
-
-    private func applyLocalDelete(itemIDs: Set<ReadingListItem.ID>) {
         let replacementSelectionID = selectedItemIDs.isSubset(of: itemIDs) && !selectedItemIDs.isEmpty
             ? neighborItemID(ofRemoved: itemIDs)
             : nil
 
-        allItems.removeAll { itemIDs.contains($0.id) }
+        pendingDeletionStore.stage(items)
         recomputeAllDerivedData(resetPagination: false)
 
         if let replacementSelectionID,
            filteredItems.contains(where: { $0.id == replacementSelectionID })
         {
             selectedItemIDs = [replacementSelectionID]
+        }
+    }
+
+    /// Takes the items off the edit list, returning them to their lists.
+    func restore(_ items: [ReadingListItem]) {
+        pendingDeletionStore.unstage(ids: Set(items.map(\.id)))
+        recomputeAllDerivedData(resetPagination: false)
+    }
+
+    /// Removes every staged item from Safari in one write. Safari must be quit
+    /// first, or it will undo the deletion.
+    func applyPendingDeletions() async throws -> PendingDeletionResult {
+        let entries = pendingDeletionStore.entries
+        guard !entries.isEmpty, !isApplyingPendingDeletions else {
+            return PendingDeletionResult(deletedCount: 0, alreadyGoneCount: 0)
+        }
+
+        isApplyingPendingDeletions = true
+        defer {
+            isApplyingPendingDeletions = false
+        }
+
+        let alreadyGoneCount = isUsingDemoData
+            ? 0
+            : try await service.deleteItems(entries.map(\.item))
+
+        let entryIDs = Set(entries.map(\.id))
+        allItems.removeAll { entryIDs.contains($0.id) }
+        pendingDeletionStore.unstage(ids: entryIDs)
+        recomputeAllDerivedData(resetPagination: false)
+
+        return PendingDeletionResult(
+            deletedCount: entries.count - alreadyGoneCount,
+            alreadyGoneCount: alreadyGoneCount
+        )
+    }
+
+    /// Drops staged items that Safari no longer has, e.g. because they were
+    /// deleted on another device.
+    private func dropPendingDeletionsMissingFromSafari() {
+        let safariItemIDs = Set(allItems.map(\.id))
+        let goneIDs = pendingDeletionStore.ids.subtracting(safariItemIDs)
+        if !goneIDs.isEmpty {
+            pendingDeletionStore.unstage(ids: goneIDs)
         }
     }
 
@@ -362,18 +409,23 @@ final class ReadingListViewModel {
     }
 
     private func recomputeAllDerivedData(resetPagination: Bool) {
+        let pendingIDs = pendingDeletionStore.ids
+        activeItems = allItems.filter { !pendingIDs.contains($0.id) }
+        pendingItems = allItems.filter { pendingIDs.contains($0.id) }
+        pendingDeletionCount = pendingItems.count
+
         let statusFilter = statusFilter
-        allCount = allItems.lazy.filter(statusFilter.includes).count
+        allCount = activeItems.lazy.filter(statusFilter.includes).count
 
         let folders = availableSmartFolders
         smartFolderCounts = Dictionary(uniqueKeysWithValues: folders.map { folder in
-            let count = allItems.lazy.filter {
+            let count = activeItems.lazy.filter {
                 folder.matches(item: $0) && statusFilter.includes($0)
             }.count
             return (folder.id, count)
         })
 
-        let source = allItems.filter(statusFilter.includes)
+        let source = activeItems.filter(statusFilter.includes)
         let grouped = Dictionary(grouping: source, by: \.hostname)
         frequentDomainFolders = grouped
             .map { DomainFolder(hostname: $0.key, count: $0.value.count) }
@@ -442,17 +494,24 @@ final class ReadingListViewModel {
     private func items(for selection: FolderSelection) -> [ReadingListItem] {
         switch selection {
         case .all:
-            return allItems
+            return activeItems
         case let .smartFolder(folderID):
             guard let folder = availableSmartFolders.first(where: { $0.id == folderID }) else {
                 return []
             }
-            return allItems.filter { folder.matches(item: $0) }
+            return activeItems.filter { folder.matches(item: $0) }
         case let .domain(hostname):
-            return allItems.filter { $0.hostname == hostname }
+            return activeItems.filter { $0.hostname == hostname }
         case .otherDomains:
             let frequentHostnames = Set(frequentDomainFolders.map(\.hostname))
-            return allItems.filter { !frequentHostnames.contains($0.hostname) }
+            return activeItems.filter { !frequentHostnames.contains($0.hostname) }
+        case .pendingDeletions:
+            return pendingItems
         }
     }
+}
+
+struct PendingDeletionResult: Equatable, Sendable {
+    let deletedCount: Int
+    let alreadyGoneCount: Int
 }

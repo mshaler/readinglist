@@ -6,7 +6,9 @@ import Testing
 @Suite("ReadingListViewModel")
 struct ReadingListViewModelTests {
     /// Items A (newest) through E (oldest), listed in that order.
-    private func makeViewModel() -> ReadingListViewModel {
+    private func makeViewModel(
+        pendingDeletionStore: PendingDeletionStore = PendingDeletionStore(storageURL: nil)
+    ) -> ReadingListViewModel {
         let items = ["A", "B", "C", "D", "E"].enumerated().map { index, title in
             ReadingListItem(
                 title: title,
@@ -20,6 +22,7 @@ struct ReadingListViewModelTests {
             .appending(path: "smart-folders-\(UUID().uuidString).json", directoryHint: .notDirectory)
         let viewModel = ReadingListViewModel(
             smartFolderStore: SmartFolderStore(storageURL: storageURL),
+            pendingDeletionStore: pendingDeletionStore,
             demoItems: items
         )
         viewModel.statusFilter = .all
@@ -46,6 +49,7 @@ struct ReadingListViewModelTests {
             .appending(path: "smart-folders-\(UUID().uuidString).json", directoryHint: .notDirectory)
         let viewModel = ReadingListViewModel(
             smartFolderStore: SmartFolderStore(storageURL: storageURL),
+            pendingDeletionStore: PendingDeletionStore(storageURL: nil),
             demoItems: items
         )
         viewModel.statusFilter = .all
@@ -143,5 +147,71 @@ struct ReadingListViewModelTests {
 
         let websitesTotal = viewModel.frequentDomainFolders.map(\.count).reduce(0, +) + viewModel.otherDomainsCount
         #expect(websitesTotal == viewModel.allCount)
+    }
+
+    @Test func deletingStagesItemsInsteadOfRemovingThem() {
+        let viewModel = makeViewModel()
+        select(["B", "C"], in: viewModel)
+
+        viewModel.delete(viewModel.selectedItems)
+
+        #expect(viewModel.allCount == 3)
+        #expect(viewModel.pendingDeletionCount == 2)
+        viewModel.selectedFolder = .pendingDeletions
+        #expect(viewModel.filteredItems.map(\.title) == ["B", "C"])
+    }
+
+    @Test func restoringReturnsItemsToTheirLists() throws {
+        let viewModel = makeViewModel()
+        select(["B", "C"], in: viewModel)
+        viewModel.delete(viewModel.selectedItems)
+
+        viewModel.selectedFolder = .pendingDeletions
+        let itemB = try #require(viewModel.filteredItems.first { $0.title == "B" })
+        viewModel.restore([itemB])
+
+        #expect(viewModel.pendingDeletionCount == 1)
+        viewModel.selectedFolder = .all
+        #expect(viewModel.filteredItems.map(\.title) == ["A", "B", "D", "E"])
+    }
+
+    @Test func applyingRemovesStagedItemsAndEmptiesTheEditList() async throws {
+        let viewModel = makeViewModel()
+        select(["B", "C"], in: viewModel)
+        viewModel.delete(viewModel.selectedItems)
+
+        let result = try await viewModel.applyPendingDeletions()
+
+        #expect(result == PendingDeletionResult(deletedCount: 2, alreadyGoneCount: 0))
+        #expect(viewModel.pendingDeletionCount == 0)
+        #expect(viewModel.allCount == 3)
+    }
+
+    @Test func stagedItemsStayHiddenAfterRelaunch() {
+        let pendingStore = PendingDeletionStore(storageURL: nil)
+        let first = makeViewModel(pendingDeletionStore: pendingStore)
+        select(["B"], in: first)
+        first.delete(first.selectedItems)
+
+        let relaunched = makeViewModel(pendingDeletionStore: pendingStore)
+
+        #expect(relaunched.filteredItems.map(\.title) == ["A", "C", "D", "E"])
+        #expect(relaunched.pendingDeletionCount == 1)
+    }
+
+    @Test func reloadDropsStagedItemsThatAreGoneFromSafari() {
+        let pendingStore = PendingDeletionStore(storageURL: nil)
+        pendingStore.stage([ReadingListItem(
+            title: "Gone",
+            url: URL(string: "https://example.com/gone")!,
+            previewText: nil,
+            dateAdded: nil,
+            dateLastViewed: nil
+        )])
+
+        let viewModel = makeViewModel(pendingDeletionStore: pendingStore)
+
+        #expect(viewModel.pendingDeletionCount == 0)
+        #expect(pendingStore.ids.isEmpty)
     }
 }

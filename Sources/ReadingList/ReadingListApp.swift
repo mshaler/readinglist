@@ -6,6 +6,9 @@ struct ReadingListApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var accessManager = BookmarkAccessManager()
     @State private var smartFolderStore = SmartFolderStore()
+    @State private var pendingDeletionStore = PendingDeletionStore(
+        storageURL: PendingDeletionStore.defaultStorageURL()
+    )
     @State private var updateChecker = UpdateChecker()
 
     private let isDemoMode = isDemoDataModeEnabled
@@ -64,6 +67,7 @@ struct ReadingListApp: App {
             MainContentWrapper(
                 bookmarksPlistURL: url,
                 smartFolderStore: smartFolderStore,
+                pendingDeletionStore: pendingDeletionStore,
                 updateChecker: updateChecker
             )
             .id(url)

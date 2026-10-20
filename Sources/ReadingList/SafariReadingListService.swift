@@ -54,22 +54,25 @@ struct SafariReadingListService: Sendable {
     /// Permanently removes the item, and any other copies of its URL, from Safari's Reading List.
     func deleteItem(url: URL, dateAdded: Date?) async throws {
         try await performWrite { [self] in
-            try deleteItemsSync([(url, dateAdded)])
+            _ = try deleteItemsSync([(url, dateAdded)], skippingMissing: false)
         }
     }
 
-    /// Permanently removes all the items, including any other copies of their
-    /// URLs, from Safari's Reading List in one write. If any item can't be
-    /// found, nothing is removed.
-    func deleteItems(_ items: [ReadingListItem]) async throws {
+    /// Permanently removes the items, including any other copies of their
+    /// URLs, from Safari's Reading List in one write. Items that are already
+    /// gone are skipped; returns how many were skipped.
+    @discardableResult
+    func deleteItems(_ items: [ReadingListItem]) async throws -> Int {
         let targets = items.map { ($0.url, $0.dateAdded) }
-        try await performWrite { [self] in
-            try deleteItemsSync(targets)
+        return try await performWrite { [self] in
+            try deleteItemsSync(targets, skippingMissing: true)
         }
     }
 
-    private func performWrite(_ work: @escaping @Sendable () throws -> Void) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+    private func performWrite<Value: Sendable>(
+        _ work: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Value, any Error>) in
             Self.writeQueue.async {
                 continuation.resume(with: Result(catching: work))
             }
@@ -110,8 +113,13 @@ struct SafariReadingListService: Sendable {
         try updatedData.write(to: bookmarksPlistURL, options: .atomic)
     }
 
-    private func deleteItemsSync(_ targets: [(url: URL, dateAdded: Date?)]) throws {
+    /// Returns how many targets were missing and skipped.
+    private func deleteItemsSync(
+        _ targets: [(url: URL, dateAdded: Date?)],
+        skippingMissing: Bool
+    ) throws -> Int {
         var root = try loadPlistRoot()
+        var missingCount = 0
 
         for target in targets {
             let didDelete = removeItem(
@@ -120,7 +128,11 @@ struct SafariReadingListService: Sendable {
                 targetDateAdded: target.dateAdded
             )
             guard didDelete else {
-                throw ReadingListWriteError.itemNotFound(target.url)
+                guard skippingMissing else {
+                    throw ReadingListWriteError.itemNotFound(target.url)
+                }
+                missingCount += 1
+                continue
             }
 
             // The list shows one item per URL, so also remove any hidden copies.
@@ -133,6 +145,7 @@ struct SafariReadingListService: Sendable {
             options: 0
         )
         try updatedData.write(to: bookmarksPlistURL, options: .atomic)
+        return missingCount
     }
 
     private func loadPlistRoot() throws -> [String: Any] {

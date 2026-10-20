@@ -15,6 +15,13 @@ enum SafariApp {
         !runningInstances.isEmpty
     }
 
+    static func open() {
+        guard let safariURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari") else {
+            return
+        }
+        NSWorkspace.shared.openApplication(at: safariURL, configuration: NSWorkspace.OpenConfiguration())
+    }
+
     /// Asks Safari to quit and waits for it to exit. Returns `false` if Safari
     /// is still running when the wait ends, e.g. because the user cancelled
     /// Safari's own "quit with open tabs?" prompt or denied permission to

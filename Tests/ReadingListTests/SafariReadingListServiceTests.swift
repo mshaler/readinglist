@@ -311,15 +311,16 @@ struct SafariReadingListServiceTests {
         #expect(remaining.map(\.title) == ["Item 2"])
     }
 
-    @Test func deleteItemsChangesNothingWhenAnyTargetIsMissing() async throws {
+    @Test func deleteItemsSkipsAndCountsMissingTargets() async throws {
         let added = Date(timeIntervalSinceReferenceDate: 700_000_000)
         let url = try writeFixture(items: [
             itemPayload(urlString: "https://example.com/exists", title: "Exists", dateAdded: added),
+            itemPayload(urlString: "https://example.com/keep", title: "Keep", dateAdded: added),
         ])
         defer { try? FileManager.default.removeItem(at: url) }
 
         let service = SafariReadingListService(bookmarksPlistURL: url)
-        let existing = try #require(try await service.fetchItems().first)
+        let existing = try #require(try await service.fetchItems().first { $0.title == "Exists" })
         let missing = ReadingListItem(
             title: "Missing",
             url: URL(string: "https://example.com/missing")!,
@@ -328,12 +329,11 @@ struct SafariReadingListServiceTests {
             dateLastViewed: nil
         )
 
-        await #expect(throws: ReadingListWriteError.self) {
-            try await service.deleteItems([existing, missing])
-        }
+        let missingCount = try await service.deleteItems([existing, missing])
 
+        #expect(missingCount == 1)
         let remaining = try await service.fetchItems()
-        #expect(remaining.map(\.title) == ["Exists"])
+        #expect(remaining.map(\.title) == ["Keep"])
     }
 
     @Test func fetchThrowsWhenFileMissing() async throws {

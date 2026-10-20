@@ -212,6 +212,8 @@ enum FolderSelection: Hashable, Sendable {
     case domain(String)
     /// Websites with too few items to get their own sidebar entry.
     case otherDomains
+    /// Items staged for deletion from Safari.
+    case pendingDeletions
 
     func title(using smartFolders: [SmartFolder]) -> String {
         switch self {
@@ -223,6 +225,8 @@ enum FolderSelection: Hashable, Sendable {
             return host
         case .otherDomains:
             return "Other Websites"
+        case .pendingDeletions:
+            return "Pending Deletions"
         }
     }
 }

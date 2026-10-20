@@ -7,16 +7,12 @@ struct ContentView: View {
     var updateChecker: UpdateChecker?
     @Environment(\.openURL) private var openURL
     @Environment(\.openSettings) private var openSettings
-    @AppStorage(AppSettingsKeys.isDeletionEnabled) private var isDeletionEnabled = false
     @AppStorage(AppSettingsKeys.isPreviewDarkModeForced) private var isPreviewDarkModeForced = false
     @State private var pendingOpenURLs: [URL] = []
     @State private var pendingOpenLinksSourceName = ""
     @State private var isShowingOpenLinksConfirmation = false
-    @State private var isShowingDeletionDisabledAlert = false
-    @State private var pendingDeleteItems: [ReadingListItem] = []
-    @State private var pendingDeleteRestoresListFocus = false
-    @State private var isShowingDeleteConfirmation = false
-    @State private var isShowingQuitSafariConfirmation = false
+    @State private var isShowingApplyConfirmation = false
+    @State private var applyResult: PendingDeletionResult?
     @FocusState private var isItemListFocused: Bool
     private let openLinksConfirmationThreshold = 15
 
@@ -54,50 +50,40 @@ struct ContentView: View {
         } message: {
             Text("This can open many tabs for \(pendingOpenLinksSourceName).")
         }
-        .confirmationDialog(
-            "Delete \(pendingDeleteItems.count) items from your Reading List?",
-            isPresented: $isShowingDeleteConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Delete \(pendingDeleteItems.count) Items", role: .destructive) {
-                performDelete(pendingDeleteItems, restoringListFocus: pendingDeleteRestoresListFocus)
-                pendingDeleteItems = []
-            }
-            Button("Cancel", role: .cancel) {
-                pendingDeleteItems = []
-            }
-        } message: {
-            Text("They'll be removed from Safari on all your devices the next time Safari opens. This can't be undone.")
-        }
         .alert(
-            pendingDeleteItems.count == 1
-                ? "Quit Safari and delete this item?"
-                : "Quit Safari and delete \(pendingDeleteItems.count) items?",
-            isPresented: $isShowingQuitSafariConfirmation
+            "Delete \(viewModel.pendingDeletionCount) items from Safari?",
+            isPresented: $isShowingApplyConfirmation
         ) {
-            Button("Quit Safari and Delete", role: .destructive) {
-                quitSafariAndDeletePendingItems()
+            if let bookmarksPlistURL = viewModel.bookmarksPlistURL {
+                Button("Back Up and Delete") {
+                    if BookmarksBackup.promptAndSave(bookmarksPlistURL: bookmarksPlistURL) {
+                        applyPendingDeletions()
+                    }
+                }
             }
-            Button("Cancel", role: .cancel) {
-                pendingDeleteItems = []
-            }
-        } message: {
-            Text(
-                "Safari undoes deletions made while it's open. " +
-                    "They'll sync to your other devices the next time you open Safari."
-            )
-        }
-        .alert("Deleting Is Turned Off", isPresented: $isShowingDeletionDisabledAlert) {
-            Button("Open Settings") {
-                SettingsRouter.shared.pendingTab = .advanced
-                openSettings()
+            Button("Delete", role: .destructive) {
+                applyPendingDeletions()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "Deleting removes items from Safari's Reading List on all your devices, " +
-                    "so it's off by default. You can turn it on in Settings → Advanced."
+                "Reading List will quit Safari if it's open, because Safari undoes deletions made while it runs. " +
+                    "The deletions sync to your other devices the next time you open Safari. This can't be undone."
             )
+        }
+        .alert(
+            "Deleted \(applyResult?.deletedCount ?? 0) items from Safari",
+            isPresented: Binding(
+                get: { applyResult != nil },
+                set: { if !$0 { applyResult = nil } }
+            )
+        ) {
+            Button("Open Safari") {
+                SafariApp.open()
+            }
+            Button("Later", role: .cancel) {}
+        } message: {
+            Text(applyResultMessage)
         }
     }
 
@@ -111,6 +97,17 @@ struct ContentView: View {
                         count: viewModel.allCount,
                         iconTint: sidebarIconTint(for: .all)
                     )
+                }
+
+                if viewModel.pendingDeletionCount > 0 {
+                    NavigationLink(value: FolderSelection.pendingDeletions) {
+                        sidebarLabel(
+                            title: FolderSelection.pendingDeletions.title(using: []),
+                            icon: "trash",
+                            count: viewModel.pendingDeletionCount,
+                            iconTint: sidebarIconTint(for: .pendingDeletions)
+                        )
+                    }
                 }
 
                 ForEach(viewModel.builtInSmartFolders) { folder in
@@ -196,7 +193,52 @@ struct ContentView: View {
         .navigationSplitViewColumnWidth(min: 220, ideal: 270)
     }
 
+    private var isShowingPendingDeletions: Bool {
+        viewModel.activeSelection == .pendingDeletions
+    }
+
     private var detailView: some View {
+        VStack(spacing: 0) {
+            if isShowingPendingDeletions, viewModel.pendingDeletionCount > 0 {
+                pendingDeletionsBar
+                Divider()
+            }
+            itemList
+        }
+        .navigationSplitViewColumnWidth(min: 360, ideal: 500)
+        .navigationTitle(viewModel.title(for: viewModel.activeSelection))
+        .navigationSubtitle(currentSelectionSubtitle)
+        .toolbar { detailToolbarContent }
+        .searchable(
+            text: $viewModel.searchQuery,
+            placement: .toolbar,
+            prompt: "Search links"
+        )
+    }
+
+    private var pendingDeletionsBar: some View {
+        HStack(spacing: 10) {
+            Text("Not yet deleted from Safari.")
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Button("Restore All") {
+                viewModel.restore(viewModel.filteredItems)
+            }
+
+            Button("Delete from Safari\u{2026}") {
+                isShowingApplyConfirmation = true
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+        }
+        .disabled(viewModel.isApplyingPendingDeletions)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private var itemList: some View {
         Group {
             if viewModel.filteredItems.isEmpty {
                 emptyStateView
@@ -234,15 +276,6 @@ struct ContentView: View {
                 }
             }
         }
-        .navigationSplitViewColumnWidth(min: 360, ideal: 500)
-        .navigationTitle(viewModel.title(for: viewModel.activeSelection))
-        .navigationSubtitle(currentSelectionSubtitle)
-        .toolbar { detailToolbarContent }
-        .searchable(
-            text: $viewModel.searchQuery,
-            placement: .toolbar,
-            prompt: "Search links"
-        )
     }
 
     @ToolbarContentBuilder
@@ -429,18 +462,20 @@ struct ContentView: View {
     @ViewBuilder
     private func itemsContextMenu(for ids: Set<ReadingListItem.ID>) -> some View {
         let items = viewModel.filteredItems.filter { ids.contains($0.id) }
-        if items.count == 1, let item = items.first {
+        if isShowingPendingDeletions, !items.isEmpty {
+            Button {
+                viewModel.restore(items)
+            } label: {
+                Label(items.count == 1 ? "Restore" : "Restore \(items.count) Items", systemImage: "arrow.uturn.backward")
+            }
+        } else if items.count == 1, let item = items.first {
             itemContextMenu(for: item)
         } else if items.count > 1 {
             Button(role: .destructive) {
-                requestDelete(items)
+                delete(items)
             } label: {
-                Label(
-                    isDeletionEnabled ? "Delete \(items.count) Items" : "Delete \(items.count) Items\u{2026}",
-                    systemImage: "trash"
-                )
+                Label("Delete \(items.count) Items", systemImage: "trash")
             }
-            .disabled(items.contains { viewModel.deletingItemIDs.contains($0.id) })
         }
     }
 
@@ -475,61 +510,23 @@ struct ContentView: View {
         Divider()
 
         Button(role: .destructive) {
-            requestDelete([item])
+            delete([item])
         } label: {
-            Label(isDeletionEnabled ? "Delete" : "Delete\u{2026}", systemImage: "trash")
+            Label("Delete", systemImage: "trash")
         }
-        .disabled(viewModel.deletingItemIDs.contains(item.id))
     }
 
-    /// Deletes the selected items, or explains how to enable deleting if it's off.
+    /// Stages the selected items for deletion. In the edit list, Delete does nothing.
     private func deleteSelectedItems() {
         let items = viewModel.selectedItems
-        guard !items.isEmpty else {
+        guard !items.isEmpty, !isShowingPendingDeletions else {
             return
         }
-        requestDelete(items)
+        delete(items)
     }
 
-    private func requestDelete(_ items: [ReadingListItem]) {
-        guard isDeletionEnabled else {
-            isShowingDeletionDisabledAlert = true
-            return
-        }
-
-        // This alert doubles as the delete confirmation.
-        if SafariApp.isRunning {
-            pendingDeleteItems = items
-            pendingDeleteRestoresListFocus = isItemListFocused
-            isShowingQuitSafariConfirmation = true
-            return
-        }
-
-        if items.count > 1 {
-            pendingDeleteItems = items
-            pendingDeleteRestoresListFocus = isItemListFocused
-            isShowingDeleteConfirmation = true
-            return
-        }
-
-        performDelete(items, restoringListFocus: isItemListFocused)
-    }
-
-    private func quitSafariAndDeletePendingItems() {
-        let items = pendingDeleteItems
-        let restoresListFocus = pendingDeleteRestoresListFocus
-        pendingDeleteItems = []
-
-        Task { @MainActor in
-            guard await SafariApp.quit() else {
-                viewModel.loadError = "Safari didn't quit, so nothing was deleted."
-                return
-            }
-            performDelete(items, restoringListFocus: restoresListFocus)
-        }
-    }
-
-    private func performDelete(_ items: [ReadingListItem], restoringListFocus: Bool) {
+    private func delete(_ items: [ReadingListItem]) {
+        let restoringListFocus = isItemListFocused
         viewModel.delete(items)
 
         // Removing the selected row makes AppKit drop first responder, so a
@@ -539,6 +536,34 @@ struct ContentView: View {
                 isItemListFocused = true
             }
         }
+    }
+
+    private func applyPendingDeletions() {
+        Task { @MainActor in
+            if SafariApp.isRunning, !viewModel.isUsingDemoData {
+                guard await SafariApp.quit() else {
+                    viewModel.loadError = "Safari didn't quit, so nothing was deleted."
+                    return
+                }
+            }
+
+            do {
+                applyResult = try await viewModel.applyPendingDeletions()
+                viewModel.selectedFolder = .all
+            } catch {
+                viewModel.loadError = error.localizedDescription
+            }
+        }
+    }
+
+    private var applyResultMessage: String {
+        guard let applyResult else {
+            return ""
+        }
+        let alreadyGone = applyResult.alreadyGoneCount > 0
+            ? "\(applyResult.alreadyGoneCount) were already gone from Safari. "
+            : ""
+        return alreadyGone + "Open Safari to sync the deletions to your other devices."
     }
 
     private func openAllLinksForDomain(_ hostname: String) {
@@ -662,6 +687,8 @@ struct ContentView: View {
             return SmartFolderIconPalette.tint(for: folder.systemImage)
         case .domain, .otherDomains:
             return .gray
+        case .pendingDeletions:
+            return .red
         }
     }
 }

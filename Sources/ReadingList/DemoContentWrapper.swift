@@ -10,6 +10,7 @@ struct DemoContentWrapper: View {
         _viewModel = State(
             initialValue: ReadingListViewModel(
                 smartFolderStore: smartFolderStore,
+                pendingDeletionStore: PendingDeletionStore(storageURL: nil),
                 demoItems: DemoReadingListData.makeItems()
             )
         )

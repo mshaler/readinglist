@@ -13,6 +13,7 @@ struct MainContentWrapper: View {
     init(
         bookmarksPlistURL: URL,
         smartFolderStore: SmartFolderStore,
+        pendingDeletionStore: PendingDeletionStore,
         updateChecker: UpdateChecker? = nil
     ) {
         self.bookmarksPlistURL = bookmarksPlistURL
@@ -20,7 +21,11 @@ struct MainContentWrapper: View {
         self.updateChecker = updateChecker
         let service = SafariReadingListService(bookmarksPlistURL: bookmarksPlistURL)
         _viewModel = State(
-            initialValue: ReadingListViewModel(service: service, smartFolderStore: smartFolderStore)
+            initialValue: ReadingListViewModel(
+                service: service,
+                smartFolderStore: smartFolderStore,
+                pendingDeletionStore: pendingDeletionStore
+            )
         )
     }
 
