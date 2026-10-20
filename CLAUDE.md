@@ -38,4 +38,5 @@ All source is in `Sources/ReadingList/`. Key layers:
 - macOS 14+ minimum deployment target.
 - Demo mode (`--demo-data` flag or `READING_LIST_DEMO=1` env var) uses `DemoReadingListData` — no file system access.
 - Writes (read-status changes and item deletion) go directly to Safari's `Bookmarks.plist` (atomic write). Deletion is opt-in via Settings → Advanced (`AppSettingsKeys.isDeletionEnabled`, off by default) and prompts the user to back up first when enabling.
+- Safari keeps the Reading List in memory and writes it back to `Bookmarks.plist`, undoing deletions made to the file while it runs. Every item carries iCloud sync metadata (`Sync.ServerID`); Safari only syncs a deletion to other devices if the item was removed while Safari was quit, and it does so the next time Safari opens. So deleting requires Safari to be quit: `SafariApp` sends it a quit Apple Event (sandboxed apps can't `terminate()` other apps), which needs the Apple Events entitlements and `NSAppleEventsUsageDescription`. Deleting removes every copy of a URL, because the list shows one item per URL.
 - `ReadingListItem.id` is a composite of URL + dateAdded timestamp to handle duplicate URLs.
