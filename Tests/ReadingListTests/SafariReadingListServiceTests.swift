@@ -250,18 +250,22 @@ struct SafariReadingListServiceTests {
         #expect(remaining.isEmpty)
     }
 
-    @Test func deleteDisambiguatesByDateAdded() async throws {
+    @Test func deleteRemovesEveryCopyOfTheURL() async throws {
         let older = Date(timeIntervalSinceReferenceDate: 600_000_000)
         let newer = Date(timeIntervalSinceReferenceDate: 700_000_000)
         let sharedURL = "https://example.com/shared"
         let url = try writeFixture(items: [
             itemPayload(urlString: sharedURL, title: "Newer Copy", dateAdded: newer),
             itemPayload(urlString: sharedURL, title: "Older Copy", dateAdded: older),
+            itemPayload(urlString: "https://example.com/other", title: "Other", dateAdded: older),
         ])
         defer { try? FileManager.default.removeItem(at: url) }
 
         let service = SafariReadingListService(bookmarksPlistURL: url)
-        try await service.deleteItem(url: URL(string: sharedURL)!, dateAdded: older)
+        let shown = try await service.fetchItems()
+        let sharedItem = try #require(shown.first { $0.url.absoluteString == sharedURL })
+
+        try await service.deleteItems([sharedItem])
 
         let data = try Data(contentsOf: url)
         let root = try #require(
@@ -271,9 +275,7 @@ struct SafariReadingListServiceTests {
         let readingListNode = try #require(children.first)
         let items = try #require(readingListNode["Children"] as? [[String: Any]])
 
-        #expect(items.count == 1)
-        let title = (items[0]["URIDictionary"] as? [String: Any])?["title"] as? String
-        #expect(title == "Newer Copy")
+        #expect(items.map { $0["URLString"] as? String } == ["https://example.com/other"])
     }
 
     @Test func deleteThrowsWhenItemMissing() async throws {

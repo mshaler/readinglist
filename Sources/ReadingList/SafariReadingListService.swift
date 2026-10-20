@@ -51,15 +51,16 @@ struct SafariReadingListService: Sendable {
         }
     }
 
-    /// Permanently removes the item from Safari's Reading List.
+    /// Permanently removes the item, and any other copies of its URL, from Safari's Reading List.
     func deleteItem(url: URL, dateAdded: Date?) async throws {
         try await performWrite { [self] in
             try deleteItemsSync([(url, dateAdded)])
         }
     }
 
-    /// Permanently removes all the items from Safari's Reading List in one
-    /// write. If any item can't be found, nothing is removed.
+    /// Permanently removes all the items, including any other copies of their
+    /// URLs, from Safari's Reading List in one write. If any item can't be
+    /// found, nothing is removed.
     func deleteItems(_ items: [ReadingListItem]) async throws {
         let targets = items.map { ($0.url, $0.dateAdded) }
         try await performWrite { [self] in
@@ -121,6 +122,9 @@ struct SafariReadingListService: Sendable {
             guard didDelete else {
                 throw ReadingListWriteError.itemNotFound(target.url)
             }
+
+            // The list shows one item per URL, so also remove any hidden copies.
+            while removeItem(in: &root, targetURLString: target.url.absoluteString, targetDateAdded: nil) {}
         }
 
         let updatedData = try PropertyListSerialization.data(
